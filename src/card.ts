@@ -84,6 +84,20 @@ export class Card {
         }
         return new Card(suit, rank);
     }
+    get point(): number {
+        if (this.rank === CardRank.Ace && this.suit === CardSuit.Spade) return 0;
+        if (this.suit === CardSuit.Joker) return -1;
+        switch (this.rank) {
+            case CardRank.Ten:
+            case CardRank.Jack:
+            case CardRank.Queen:
+            case CardRank.King:
+            case CardRank.Ace:
+                return 1;
+            default:
+                return 0;
+        }
+    }
 
     readonly suit: CardSuit;
     readonly rank: CardRank | null;
