@@ -21,7 +21,8 @@ class PlayerStatus {
     cards: Card[] = [];
     role: Role = Role.None;
     playedCard: string = '';
-    ready: boolean = false
+    ready: boolean = false;
+    commitReady: boolean = false;
 
     constructor() {
 
@@ -32,6 +33,7 @@ class PlayerStatus {
 class RoomData {
     id: string;
     playerList: string[] = [];
+    turn: number = 0;
     gameStatus: GameStatus = GameStatus.Ready;
     playerStatus: { [playerId: string]: PlayerStatus } = {};
 
@@ -42,15 +44,30 @@ class RoomData {
 
     reset() {
         this.gameStatus = GameStatus.Ready;
+        this.turn = 0;
         this.playerList.forEach(userId => {
             let ps: PlayerStatus = this.playerStatus[userId];
             ps.cards = [];
             ps.playedCard = '';
             ps.ready = false;
+            ps.commitReady= false;
             ps.role = Role.None;
         });
         // emit reset event to room
         server.in(this.id).emit('reset', null);
+    }
+
+    changeHead(user: UserData) {
+        const idx = this.playerList.indexOf(user.id);
+        this.playerList = this.playerList.slice(idx).concat(this.playerList.slice(0, idx));
+    }
+
+    nextTurn() {
+        this.turn = (this.turn + 1) % 5;
+    }
+
+    currentTurn(): UserData {
+        return userData[this.playerList[this.turn]];
     }
 
     join(user: UserData): boolean {
@@ -91,6 +108,14 @@ class RoomData {
             readyCount += +this.playerStatus[userId].ready;
         });
         return readyCount === 5;
+    }
+
+    isAllCommitmentReady(): boolean {
+        let commitCount = 0;
+        this.playerList.forEach(userId => {
+            commitCount += +this.playerStatus[userId].commitReady;
+        });
+        return commitCount === 5;
     }
 }
 
@@ -139,11 +164,11 @@ server.on('connect', socket => {
         }
     });
 
-    socket.on('room-list', (data, reply) => {
+    socket.on('room-list', (reply) => {
         reply(Object.keys(roomData));
     });
 
-    socket.on('create-room', (data, reply) => {
+    socket.on('create-room', (reply) => {
         const userId = socket.id;
         const user = userData[userId];
         if (user.isJoined()) {
@@ -176,7 +201,7 @@ server.on('connect', socket => {
         reply(data);
     });
 
-    socket.on('ready', (data, reply) => {
+    socket.on('ready', (reply) => {
         // data is none
         const user = userData[socket.id];
         const room = roomData[user.roomId];
@@ -197,7 +222,7 @@ server.on('connect', socket => {
         reply(true);
     });
 
-    socket.on('ready-cancel', (data, reply) => {
+    socket.on('ready-cancel', (reply) => {
         const user = userData[socket.id];
         const room = roomData[user.roomId];
 
@@ -209,6 +234,43 @@ server.on('connect', socket => {
         room.playerStatus[user.id].ready = false;
         reply(true);
     });
+
+    socket.on('deal-miss', (data, reply) => {
+        const user = userData[socket.id];
+        const room = roomData[user.roomId];
+
+        if (room.gameStatus !== GameStatus.DealMissPending) {
+            reply(false);
+            return;
+        }
+
+        if (!data) {
+            room.playerStatus[user.id].commitReady = true;
+            if (room.isAllCommitmentReady()) {
+                room.gameStatus = GameStatus.Commitment;
+                server.to(room.id).emit('commitment-request', room.currentTurn().id);
+            }
+            reply(true);
+            return;
+        }
+
+        const totalPoint = room.playerStatus[user.id].cards
+            .map(x => x.point).reduce((prev, next) => prev + next);
+
+        if (totalPoint > 0) {
+            reply(false);
+            return;
+        }
+
+        room.changeHead(user);
+        room.reset();
+        reply(true);
+    });
+
+    socket.on('commitment', data => {
+
+    });
+
 });
 
 function readyGame(room: RoomData) {
