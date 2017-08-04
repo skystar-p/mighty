@@ -1,5 +1,6 @@
 import io = require('socket.io');
 import uuid = require('uuid/v4');
+import { Card, shuffleCard } from './card';
 
 const enum GameStatus {
     Ready,
@@ -17,7 +18,7 @@ const enum Role {
 }
 
 class PlayerStatus {
-    cards: string[] = [];
+    cards: Card[] = [];
     role: Role = Role.None;
     playedCard: string = '';
     ready: boolean = false
@@ -187,7 +188,11 @@ server.on('connect', socket => {
 
         room.playerStatus[user.id].ready = true;
         if (room.isAllReady()) {
-            // prepare game
+            readyGame(room);
+            room.playerList.forEach(userId => {
+                const cards = room.playerStatus[userId].cards.map(x => x.toString());
+                server.to(userId).emit('deal', cards);
+            });
         }
         reply(true);
     });
@@ -207,5 +212,9 @@ server.on('connect', socket => {
 });
 
 function readyGame(room: RoomData) {
-
+    const card: Card[][] = shuffleCard();
+    room.playerList.forEach((userId, i) => {
+        room.playerStatus[userId].cards = card[i];
+    });
+    room.gameStatus = GameStatus.DealMissPending;
 }
