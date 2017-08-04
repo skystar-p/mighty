@@ -1,10 +1,26 @@
 import io = require('socket.io');
 import uuid = require('uuid/v4');
 
+const enum GameStatus {
+    Ready,
+    DealMissPending,
+    Commitment,
+    PresidentReady,
+    MainGame,
+}
+
+const enum Role {
+    President,
+    Friend,
+    Opposition,
+    None,
+}
+
 class PlayerStatus {
     cards: string[] = [];
-    role: string = '';
+    role: Role = Role.None;
     playedCard: string = '';
+    ready: boolean = false
 
     constructor() {
 
@@ -15,12 +31,25 @@ class PlayerStatus {
 class RoomData {
     id: string;
     playerList: string[] = [];
-    gameStatus: number = 0;
+    gameStatus: GameStatus = GameStatus.Ready;
     playerStatus: { [playerId: string]: PlayerStatus } = {};
 
     constructor(roomId: string, roomCreator: UserData) {
         this.id = roomId;
         this.join(roomCreator);
+    }
+
+    reset() {
+        this.gameStatus = GameStatus.Ready;
+        this.playerList.forEach(userId => {
+            let ps: PlayerStatus = this.playerStatus[userId];
+            ps.cards = [];
+            ps.playedCard = '';
+            ps.ready = false;
+            ps.role = Role.None;
+        });
+        // emit reset event to room
+        server.in(this.id).emit('reset', null);
     }
 
     join(user: UserData): boolean {
@@ -48,9 +77,19 @@ class RoomData {
         delete this.playerStatus[user.id];
         return true;
     }
+
     forcedLeave(user: UserData) {
         // for now
         this.leave(user);
+        this.reset();
+    }
+
+    isAllReady(): boolean {
+        let readyCount = 0;
+        this.playerList.forEach(userId => {
+            readyCount += +this.playerStatus[userId].ready;
+        });
+        return readyCount === 5;
     }
 }
 
@@ -86,6 +125,17 @@ server.on('connect', socket => {
             roomData[user.roomId].forcedLeave(user);
         }
         delete userData[socket.id];
+    });
+
+    socket.on('set-nickname', (data, reply) => {
+        const user = userData[socket.id];
+        if (data) {
+            user.nickname = data;
+            reply(true);
+        }
+        else {
+            reply(false);
+        }
     });
 
     socket.on('room-list', (data, reply) => {
@@ -125,5 +175,37 @@ server.on('connect', socket => {
         reply(data);
     });
 
+    socket.on('ready', (data, reply) => {
+        // data is none
+        const user = userData[socket.id];
+        const room = roomData[user.roomId];
+
+        if (room.gameStatus !== GameStatus.Ready) {
+            reply(false);
+            return;
+        }
+
+        room.playerStatus[user.id].ready = true;
+        if (room.isAllReady()) {
+            // prepare game
+        }
+        reply(true);
+    });
+
+    socket.on('ready-cancel', (data, reply) => {
+        const user = userData[socket.id];
+        const room = roomData[user.roomId];
+
+        if (room.gameStatus !== GameStatus.Ready) {
+            reply(false);
+            return;
+        }
+
+        room.playerStatus[user.id].ready = false;
+        reply(true);
+    });
 });
 
+function readyGame(room: RoomData) {
+
+}
