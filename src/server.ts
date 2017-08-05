@@ -40,6 +40,11 @@ interface Play {
     jokerCall: boolean;
 }
 
+interface Result {
+    role: Role;
+    score: number;
+}
+
 interface FirstTurnFriend {
     kind: 'first-turn';
 }
@@ -88,7 +93,7 @@ class RoomData {
     gameStatus: GameStatus = GameStatus.Ready;
     playerStatus: { [playerId: string]: PlayerStatus } = {};
     turnStatus: Turn | null;
-    turnIndex: number;
+    turnIndex: number = 0;
 
     constructor(roomId: string, roomCreator: UserData) {
         this.id = roomId;
@@ -98,6 +103,7 @@ class RoomData {
     reset() {
         this.gameStatus = GameStatus.Ready;
         this.turn = 0;
+        this.turnIndex = 0;
         this.turnStatus = null;
         this.commitment = { giruda: Giruda.None, score: 11 };
         this.friendSelection = null;
@@ -592,8 +598,26 @@ server.on('connect', socket => {
                 }
             });
 
-            room.changeHead(room.playerList[minIndex]);
-            room.playerStatus[room.playerList[minIndex]].score += tableScore;
+            if (room.turnIndex === 9) {
+                let result: {[userId: string]: Result};
+                room.playerList.forEach(userId => {
+                    result[userId] =  {
+                        score: room.playerStatus[userId].score,
+                        role: room.playerStatus[userId].role
+                    }
+                });
+                server.in(room.id).emit('result', result);
+                room.reset();
+            }
+
+            const nextHead = room.playerList[minIndex];
+
+            if (room.turnIndex === 0 && room.friendSelection.kind === "first-turn") {
+                room.playerStatus[nextHead].role = Role.Friend;
+            }
+
+            room.changeHead(nextHead);
+            room.playerStatus[nextHead].score += tableScore;
             room.turnStatus.currentSuit = null;
             room.turnStatus.jokerCall = false;
             room.turnIndex++;
