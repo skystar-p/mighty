@@ -1,6 +1,6 @@
 import io = require('socket.io');
 import uuid = require('uuid/v4');
-import { Card, shuffleCard } from './card';
+import { Card, Giruda, shuffleCard } from './card';
 
 const enum GameStatus {
     Ready,
@@ -17,12 +17,43 @@ const enum Role {
     None,
 }
 
+const enum CommitStatus {
+    None,
+    Committed,
+    Passed
+}
+
+interface Commitment {
+    giruda: Giruda;
+    score: number;
+}
+
+interface FirstTurnFriend {
+    kind: 'first-turn';
+}
+
+interface SelectionFriend {
+    kind: 'selection';
+    selection: string;
+}
+
+interface CardFriend {
+    kind: 'card';
+    card: Card;
+}
+
+type FriendSelection = FirstTurnFriend | SelectionFriend | CardFriend | null;
+
 class PlayerStatus {
     cards: Card[] = [];
     role: Role = Role.None;
     playedCard: string = '';
+    // for game start
     ready: boolean = false;
+    // for check deal-miss or not
     commitReady: boolean = false;
+    // for check if player commitment is done
+    commitStatus: CommitStatus = CommitStatus.None;
 
     constructor() {
 
@@ -34,6 +65,9 @@ class RoomData {
     id: string;
     playerList: string[] = [];
     turn: number = 0;
+    commitment: Commitment = { giruda: Giruda.None, score: 11 };
+    friendSelection: FriendSelection = null;
+    floor: Card[] = [];
     gameStatus: GameStatus = GameStatus.Ready;
     playerStatus: { [playerId: string]: PlayerStatus } = {};
 
@@ -45,16 +79,51 @@ class RoomData {
     reset() {
         this.gameStatus = GameStatus.Ready;
         this.turn = 0;
+        this.commitment = { giruda: Giruda.None, score: 11 };
+        this.friendSelection = null;
         this.playerList.forEach(userId => {
             let ps: PlayerStatus = this.playerStatus[userId];
             ps.cards = [];
             ps.playedCard = '';
             ps.ready = false;
             ps.commitReady= false;
+            ps.commitStatus = CommitStatus.None;
             ps.role = Role.None;
         });
         // emit reset event to room
-        server.in(this.id).emit('reset', null);
+        server.in(this.id).emit('reset');
+    }
+
+    isValidCommitment(commitment: Commitment | null): boolean {
+        if (commitment === null) return true;
+        if (commitment.score > 20) return false;
+        const oldScore = this.commitment.score + (this.commitment.giruda === Giruda.None ? 1 : 0);
+        const newScore = commitment.score + (commitment.giruda === Giruda.None ? 1 : 0);
+        return newScore > oldScore;
+    }
+
+    get passes(): number {
+        let counter = 0;
+        this.playerList.forEach(userId => {
+            counter += this.playerStatus[userId].commitStatus === CommitStatus.Passed ? 1 : 0
+        });
+        return counter;
+    }
+
+    get commits(): number {
+        let counter = 0;
+        this.playerList.forEach(userId => {
+            counter += this.playerStatus[userId].commitStatus === CommitStatus.Committed ? 1 : 0
+        });
+        return counter;
+    }
+
+    get onlyCommit(): string | null {
+        const users = this.playerList.filter(userId => {
+            return this.playerStatus[userId].commitStatus === CommitStatus.Committed;
+        });
+        if (users.length !== 1) return null;
+        return users[0];
     }
 
     changeHead(user: UserData) {
@@ -66,7 +135,7 @@ class RoomData {
         this.turn = (this.turn + 1) % 5;
     }
 
-    currentTurn(): UserData {
+    get currentTurn(): UserData {
         return userData[this.playerList[this.turn]];
     }
 
@@ -238,6 +307,7 @@ server.on('connect', socket => {
     socket.on('deal-miss', (data, reply) => {
         const user = userData[socket.id];
         const room = roomData[user.roomId];
+        const playerStatus = room.playerStatus[user.id];
 
         if (room.gameStatus !== GameStatus.DealMissPending) {
             reply(false);
@@ -248,13 +318,13 @@ server.on('connect', socket => {
             room.playerStatus[user.id].commitReady = true;
             if (room.isAllCommitmentReady()) {
                 room.gameStatus = GameStatus.Commitment;
-                server.to(room.id).emit('commitment-request', room.currentTurn().id);
+                server.to(room.id).emit('commitment-request', room.currentTurn.id);
             }
             reply(true);
             return;
         }
 
-        const totalPoint = room.playerStatus[user.id].cards
+        const totalPoint = playerStatus.cards
             .map(x => x.point).reduce((prev, next) => prev + next);
 
         if (totalPoint > 0) {
@@ -267,10 +337,130 @@ server.on('connect', socket => {
         reply(true);
     });
 
-    socket.on('commitment', data => {
+    socket.on('commitment', (data: Commitment | null, reply) => {
+        const user = userData[socket.id];
+        const room = roomData[user.roomId];
+        const playerStatus = room.playerStatus[user.id];
 
+        if (room.gameStatus !== GameStatus.Commitment) {
+            reply(false);
+            return;
+        }
+
+        if (socket.id !== room.currentTurn.id) {
+            reply(false);
+            return;
+        }
+
+        if (data === null) {
+            playerStatus.commitStatus = CommitStatus.Passed;
+            reply(true);
+
+            if (room.passes === 4 && room.commits === 1) {
+                room.gameStatus = GameStatus.PresidentReady;
+                const president = server.sockets.connected[room.onlyCommit];
+                president.to(room.id).broadcast.emit('waiting-president');
+                president.emit('floor-cards', room.floor.map(x => x.toString()))
+                return;
+            }
+
+            let counter = 0;
+            while (room.playerStatus[room.currentTurn.id].commitStatus === CommitStatus.Passed) {
+                room.nextTurn();
+                counter++;
+
+                if (counter >= 5) {
+                    room.reset();
+                    return;
+                }
+            }
+            server.to(room.id).emit('commitment-request', room.currentTurn.id);
+            return;
+        }
+
+        if (playerStatus.commitStatus === CommitStatus.Passed) {
+            reply(false);
+            return;
+        }
+
+        if (room.isValidCommitment(data)) {
+            playerStatus.commitStatus = CommitStatus.Committed;
+            room.commitment = data;
+            const currentScore = data.score + (data.giruda === Giruda.None ? 1 : 0);
+
+            if (currentScore >= 21) {
+                room.playerList.forEach(userId => {
+                    if (userId === user.id) return;
+                    room.playerStatus[userId].commitStatus = CommitStatus.Passed;
+                });
+                reply(true);
+                room.gameStatus = GameStatus.PresidentReady;
+                const president = server.sockets.connected[user.id];
+                president.to(room.id).broadcast.emit('waiting-president');
+                president.emit('floor-cards', room.floor.map(x => x.toString()))
+                return;
+            }
+
+            while (room.playerStatus[room.currentTurn.id].commitStatus === CommitStatus.Passed)
+                room.nextTurn();
+            server.to(room.id).emit('commitment-request', room.currentTurn.id);
+        }
+        else {
+            reply(false);
+            server.to(room.id).emit('commitment-request', room.currentTurn.id);
+        }
+        reply(true);
     });
 
+    socket.on('friend-selection', (floorCard: string[], friendSelection: FriendSelection, changeCommitment: Commitment | null, reply) => {
+        const user = userData[socket.id];
+        const room = roomData[user.roomId];
+        const playerStatus = room.playerStatus[user.id];
+
+        if (room.gameStatus !== GameStatus.PresidentReady) {
+            reply(false);
+            return;
+        }
+
+        if (user.id !== room.onlyCommit) {
+            reply(false);
+            return;
+        }
+
+        const whole: string[] = playerStatus.cards.concat(room.floor).map(x => x.toString());
+        if (!floorCard.every(card => whole.includes(card))) {
+            reply(false);
+            socket.emit('floor-cards', room.floor.map(x => x.toString()));
+            return;
+        }
+
+        // TODO validate friendSelection
+
+        if (changeCommitment !== null) {
+            const oldScore = room.commitment.score + (room.commitment.giruda === Giruda.None ? 1 : 0);
+            const newScore = changeCommitment.score + (changeCommitment.giruda === Giruda.None ? 1 : 0);
+            if (room.commitment.giruda === changeCommitment.giruda) {
+                if (oldScore > newScore) {
+                    reply(false);
+                    return;
+                }
+            }
+            else {
+                if (oldScore + 2 > newScore) {
+                    reply(false);
+                    return;
+                }
+            }
+            room.commitment = changeCommitment;
+        }
+
+        setRole(room, friendSelection);
+        room.floor = floorCard.map(x => Card.fromCardCode(x));
+        room.friendSelection = friendSelection;
+        room.changeHead(user);
+        room.gameStatus = GameStatus.MainGame;
+        reply(true);
+    });
 });
 
 function readyGame(room: RoomData) {
@@ -278,5 +468,31 @@ function readyGame(room: RoomData) {
     room.playerList.forEach((userId, i) => {
         room.playerStatus[userId].cards = card[i];
     });
+    room.floor = card[5];
     room.gameStatus = GameStatus.DealMissPending;
+}
+
+function setRole(room: RoomData, friend: FriendSelection) {
+    room.playerList.forEach(userId => {
+        const ps = room.playerStatus[userId];
+        if (ps.commitStatus === CommitStatus.Committed) {
+            ps.role = Role.President;
+            return;
+        }
+        switch (friend.kind) {
+            case 'selection':
+                if (friend.selection === userId) {
+                    ps.role = Role.Friend;
+                    return;
+                }
+                break;
+            case 'card':
+                if (ps.cards.some(card => card.toString() === friend.card.toString())) {
+                    ps.role = Role.Friend;
+                    return;
+                }
+                break;
+        }
+        ps.role = Role.Opposition;
+    });
 }
