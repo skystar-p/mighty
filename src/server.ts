@@ -147,8 +147,8 @@ class RoomData {
         return users[0];
     }
 
-    changeHead(user: UserData) {
-        const idx = this.playerList.indexOf(user.id);
+    changeHead(userId: string) {
+        const idx = this.playerList.indexOf(userId);
         this.playerList = this.playerList.slice(idx).concat(this.playerList.slice(0, idx));
     }
 
@@ -361,7 +361,7 @@ server.on('connect', socket => {
             return;
         }
 
-        room.changeHead(user);
+        room.changeHead(user.id);
         room.reset();
         reply(true);
     });
@@ -486,7 +486,7 @@ server.on('connect', socket => {
         setRole(room, friendSelection);
         room.floor = floorCard.map(x => Card.fromCardCode(x));
         room.friendSelection = friendSelection;
-        room.changeHead(user);
+        room.changeHead(user.id);
         room.gameStatus = GameStatus.MainGame;
         room.turnStatus = null;
         server.in(room.id).emit('turn', user.id, null);
@@ -497,6 +497,11 @@ server.on('connect', socket => {
         const user = userData[socket.id];
         const room = roomData[user.roomId];
         const playerStatus = room.playerStatus[user.id];
+
+        if (room.gameStatus !== GameStatus.MainGame) {
+            reply(false);
+            return;
+        }
 
         if (socket.id !== room.currentTurn.id) {
             reply(false);
@@ -514,7 +519,9 @@ server.on('connect', socket => {
             let newTurn: Turn = {
                 currentSuit: card.suit,
                 prevCard: card.toString(),
-                jokerCall: data.jokerCall
+                jokerCall: data.jokerCall &&
+                    ((card.toString() === 'c3' && room.commitment.giruda !== Giruda.Club) ||
+                        (card.toString() === 'h3' && room.commitment.giruda === Giruda.Club))
             }
             if (card.suit === CardSuit.Joker)
                 newTurn.currentSuit = data.suit;
@@ -522,7 +529,7 @@ server.on('connect', socket => {
             playerStatus.consumeCard(card);
             room.turnStatus = newTurn;
             room.nextTurn();
-            server.in(room.id).emit('turn', room.currentTurn.id, room.currentTurn);
+            server.in(room.id).emit('turn', room.currentTurn.id, room.turnStatus);
             reply(true);
             return;
         }
@@ -530,11 +537,18 @@ server.on('connect', socket => {
         // check validity of play
         if ((card.suit !== room.turnStatus.currentSuit &&
                 playerStatus.cards.map(x => x.suit).includes(card.suit)) &&
-            card.toString() !== 'jk' &&
-            !((card.toString() === 'sA' && room.commitment.giruda !== Giruda.Spade) ||
-                (card.toString() === 'dA' && room.commitment.giruda === Giruda.Spade))) {
+                card.toString() !== 'jk' &&
+                !((card.toString() === 'sA' && room.commitment.giruda !== Giruda.Spade) ||
+                    (card.toString() === 'dA' && room.commitment.giruda === Giruda.Spade))) {
             reply(false);
             return;
+        }
+        if (room.turnStatus.jokerCall === true &&
+                playerStatus.cards.map(x => x.toString()).includes('jk') &&
+                card.toString() !== 'jk') {
+            reply(false);
+            return;
+
         }
 
         room.turnStatus.prevCard = card.toString();
@@ -545,23 +559,48 @@ server.on('connect', socket => {
             const tableScore: number = playedCards.map(x => x.point).reduce((prev, next) => prev + next);
             const idxTable = '234567890JQKA';
             const suitTable = 'sdch';
-            let suitRank: string;
+            let suitRank: string = '';
             const cardRank: string[] = [];
 
+            suitRank += room.commitment.giruda;
+            suitRank += room.turnStatus.currentSuit;
+            for (let j = 0; j < 2; j++) {
+                for (let i = 0; i < 4; i++) {
+                    if (suitRank.includes(suitTable[i])) continue;
+                }
+            }
+
             cardRank.push(room.commitment.giruda === Giruda.Spade ? 'dA' : 'sA');
-            for (let j=0; j < 4; j++) {
-                for (let i=0; i < idxTable.length; i++) {
+            if (room.turnStatus.jokerCall === false)
+                cardRank.push('jk');
+            for (let j = 0; j < 4; j++) {
+                for (let i = 0; i < idxTable.length; i++) {
                     if (suitRank[j] === 'd' && room.commitment.giruda === Giruda.Spade && i === 0) continue;
                     if (suitRank[j] === 's' && room.commitment.giruda !== Giruda.Spade && i === 0) continue;
                     cardRank.push(suitRank[j] + idxTable[i]);
                 }
             }
+            if (room.turnStatus.jokerCall === true)
+                cardRank.push('jk');
 
-            playerStatus.consumeCard(card);
+            const playedCardRanks: number[] = playedCards.map(x => cardRank.indexOf(x.toString()));
+            let minRank = 100, minIndex = -1;
+            playedCardRanks.forEach((rank, i) => {
+                if (rank < minRank) {
+                    minRank = rank;
+                    minIndex = i;
+                }
+            });
+
+            room.changeHead(room.playerList[minIndex]);
+            room.playerStatus[room.playerList[minIndex]].score += tableScore;
             room.turnStatus.currentSuit = null;
+            room.turnStatus.jokerCall = false;
             room.turnIndex++;
         }
-
+        playerStatus.consumeCard(card);
+        server.in(room.id).emit('turn', room.currentTurn.id, room.turnStatus);
+        reply(true);
     });
 });
 
