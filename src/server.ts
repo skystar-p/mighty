@@ -1,6 +1,6 @@
 import io = require('socket.io');
 import uuid = require('uuid/v4');
-import { Card, Giruda, shuffleCard } from './card';
+import { Card, CardSuit, Giruda, shuffleCard } from './card';
 
 const enum GameStatus {
     Ready,
@@ -28,6 +28,18 @@ interface Commitment {
     score: number;
 }
 
+interface Turn {
+    currentSuit: string | null;
+    prevCard: string;
+    jokerCall: boolean;
+}
+
+interface Play {
+    card: string;
+    suit: string;
+    jokerCall: boolean;
+}
+
 interface FirstTurnFriend {
     kind: 'first-turn';
 }
@@ -47,16 +59,21 @@ type FriendSelection = FirstTurnFriend | SelectionFriend | CardFriend | null;
 class PlayerStatus {
     cards: Card[] = [];
     role: Role = Role.None;
-    playedCard: string = '';
+    playedCard: Card | null;
     // for game start
     ready: boolean = false;
     // for check deal-miss or not
     commitReady: boolean = false;
     // for check if player commitment is done
     commitStatus: CommitStatus = CommitStatus.None;
+    score: number = 0;
 
     constructor() {
 
+    }
+
+    consumeCard(card: Card) {
+        this.cards.splice(this.cards.map(x => x.toString()).indexOf(card.toString()), 1);
     }
 }
 
@@ -70,6 +87,8 @@ class RoomData {
     floor: Card[] = [];
     gameStatus: GameStatus = GameStatus.Ready;
     playerStatus: { [playerId: string]: PlayerStatus } = {};
+    turnStatus: Turn | null;
+    turnIndex: number;
 
     constructor(roomId: string, roomCreator: UserData) {
         this.id = roomId;
@@ -79,12 +98,14 @@ class RoomData {
     reset() {
         this.gameStatus = GameStatus.Ready;
         this.turn = 0;
+        this.turnStatus = null;
         this.commitment = { giruda: Giruda.None, score: 11 };
         this.friendSelection = null;
         this.playerList.forEach(userId => {
             let ps: PlayerStatus = this.playerStatus[userId];
             ps.cards = [];
-            ps.playedCard = '';
+            ps.score = 0;
+            ps.playedCard = null;
             ps.ready = false;
             ps.commitReady= false;
             ps.commitStatus = CommitStatus.None;
@@ -237,6 +258,14 @@ server.on('connect', socket => {
         reply(Object.keys(roomData));
     });
 
+    socket.on('nickname-query', (data: string[], reply) => {
+        let nicknames: {[userId: string]: string} = {};
+        data.forEach(userId => {
+            nicknames[userId] = userData[userId].nickname;
+        });
+        reply(nicknames);
+    });
+
     socket.on('create-room', (reply) => {
         const userId = socket.id;
         const user = userData[userId];
@@ -267,7 +296,7 @@ server.on('connect', socket => {
             reply(null);
             return;
         }
-        reply(data);
+        reply(roomData[data].playerList);
     });
 
     socket.on('ready', (reply) => {
@@ -325,7 +354,7 @@ server.on('connect', socket => {
         }
 
         const totalPoint = playerStatus.cards
-            .map(x => x.point).reduce((prev, next) => prev + next);
+            .map(x => x.dealPoint).reduce((prev, next) => prev + next);
 
         if (totalPoint > 0) {
             reply(false);
@@ -459,7 +488,80 @@ server.on('connect', socket => {
         room.friendSelection = friendSelection;
         room.changeHead(user);
         room.gameStatus = GameStatus.MainGame;
+        room.turnStatus = null;
+        server.in(room.id).emit('turn', user.id, null);
         reply(true);
+    });
+
+    socket.on('play', (data: Play, reply) => {
+        const user = userData[socket.id];
+        const room = roomData[user.roomId];
+        const playerStatus = room.playerStatus[user.id];
+
+        if (socket.id !== room.currentTurn.id) {
+            reply(false);
+            return;
+        }
+
+        const card = Card.fromCardCode(data.card);
+
+        if (!playerStatus.cards.includes(card)) {
+            reply(false);
+            return;
+        }
+
+        if (!room.turnStatus.currentSuit) {
+            let newTurn: Turn = {
+                currentSuit: card.suit,
+                prevCard: card.toString(),
+                jokerCall: data.jokerCall
+            }
+            if (card.suit === CardSuit.Joker)
+                newTurn.currentSuit = data.suit;
+            playerStatus.playedCard = card;
+            playerStatus.consumeCard(card);
+            room.turnStatus = newTurn;
+            room.nextTurn();
+            server.in(room.id).emit('turn', room.currentTurn.id, room.currentTurn);
+            reply(true);
+            return;
+        }
+
+        // check validity of play
+        if ((card.suit !== room.turnStatus.currentSuit &&
+                playerStatus.cards.map(x => x.suit).includes(card.suit)) &&
+            card.toString() !== 'jk' &&
+            !((card.toString() === 'sA' && room.commitment.giruda !== Giruda.Spade) ||
+                (card.toString() === 'dA' && room.commitment.giruda === Giruda.Spade))) {
+            reply(false);
+            return;
+        }
+
+        room.turnStatus.prevCard = card.toString();
+        room.nextTurn();
+
+        if (room.turn === 0) {
+            const playedCards: Card[] = room.playerList.map(x => room.playerStatus[x].playedCard);
+            const tableScore: number = playedCards.map(x => x.point).reduce((prev, next) => prev + next);
+            const idxTable = '234567890JQKA';
+            const suitTable = 'sdch';
+            let suitRank: string;
+            const cardRank: string[] = [];
+
+            cardRank.push(room.commitment.giruda === Giruda.Spade ? 'dA' : 'sA');
+            for (let j=0; j < 4; j++) {
+                for (let i=0; i < idxTable.length; i++) {
+                    if (suitRank[j] === 'd' && room.commitment.giruda === Giruda.Spade && i === 0) continue;
+                    if (suitRank[j] === 's' && room.commitment.giruda !== Giruda.Spade && i === 0) continue;
+                    cardRank.push(suitRank[j] + idxTable[i]);
+                }
+            }
+
+            playerStatus.consumeCard(card);
+            room.turnStatus.currentSuit = null;
+            room.turnIndex++;
+        }
+
     });
 });
 
