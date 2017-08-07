@@ -579,6 +579,7 @@ server.on('connect', socket => {
             for (let j = 0; j < 2; j++) {
                 for (let i = 0; i < 4; i++) {
                     if (suitRank.includes(suitTable[i])) continue;
+                    suitRank += suitTable[i];
                 }
             }
 
@@ -596,7 +597,7 @@ server.on('connect', socket => {
                 cardRank.push('jk');
 
             const playedCardRanks: number[] = playedCards.map(x => cardRank.indexOf(x.toString()));
-            let minRank = 100, minIndex = -1;
+            let minRank = 100, minIndex;
             playedCardRanks.forEach((rank, i) => {
                 if (rank < minRank) {
                     minRank = rank;
