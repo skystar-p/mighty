@@ -584,7 +584,7 @@ server.on('connect', socket => {
             }
 
             cardRank.push(room.mighty.toString());
-            if (room.turnStatus.jokerCall === false)
+            if (room.turnStatus.jokerCall === false && room.turnIndex >= 1 && room.turnIndex <= 8)
                 cardRank.push('jk');
             for (let j = 0; j < 4; j++) {
                 for (let i = 0; i < idxTable.length; i++) {
@@ -593,11 +593,11 @@ server.on('connect', socket => {
                     cardRank.push(cr);
                 }
             }
-            if (room.turnStatus.jokerCall === true)
+            if (room.turnStatus.jokerCall === true && (room.turnIndex === 1 || room.turnIndex === 9))
                 cardRank.push('jk');
 
             const playedCardRanks: number[] = playedCards.map(x => cardRank.indexOf(x.toString()));
-            let minRank = 100, minIndex;
+            let minRank: number = 100, minIndex: number;
             playedCardRanks.forEach((rank, i) => {
                 if (rank < minRank) {
                     minRank = rank;
