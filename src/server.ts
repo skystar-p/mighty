@@ -189,11 +189,12 @@ class RoomData {
         if (idx === -1) {
             return false;
         }
-        if (this.gameStatus !== 0) {
+        if (this.gameStatus !== GameStatus.Ready) {
             return false;
         }
         this.playerList.splice(idx, 1);
         delete this.playerStatus[user.id];
+        user.roomId = '';
         return true;
     }
 
@@ -295,6 +296,8 @@ server.on('connect', socket => {
         // data: room id
         const userId = socket.id;
         const user = userData[userId];
+        const room = roomData[data];
+
         if (user.isJoined()) {
             reply(null);
             return;
@@ -307,7 +310,27 @@ server.on('connect', socket => {
             reply(null);
             return;
         }
-        reply(roomData[data].playerList);
+
+        socket.to(room.id).broadcast.emit('join-room', userId, room.playerList);
+        reply(room.playerList);
+    });
+
+    socket.on('leave-room', (reply) => {
+        const userId = socket.id;
+        const user = userData[userId];
+        const room = roomData[user.roomId];
+
+        if (!user.isJoined()) {
+            reply(false);
+            return;
+        }
+        if (!room.leave(user)) {
+            reply(false);
+            return;
+        }
+
+        socket.broadcast.emit('leave-room', userId, room.playerList);
+        reply(true);
     });
 
     socket.on('ready', (reply) => {
@@ -531,6 +554,12 @@ server.on('connect', socket => {
         }
 
         if (!room.turnStatus.currentSuit) {
+            // check validity of play
+            if (room.turnIndex === 0 && room.turn === 0 && card.suit.toString() === room.commitment.giruda.toString()) {
+                reply(false);
+                return;
+            }
+
             let newTurn: Turn = {
                 currentSuit: card.suit,
                 prevCard: card.toString(),
@@ -560,13 +589,14 @@ server.on('connect', socket => {
                 card.toString() !== 'jk' && card.toString() !== room.mighty.toString()) {
             reply(false);
             return;
-
         }
 
+        // valid play by here
         room.turnStatus.prevCard = card.toString();
         room.nextTurn();
 
         if (room.turn === 0) {
+            // calculate winner of round and prepare next round
             const playedCards: Card[] = room.playerList.map(x => room.playerStatus[x].playedCard);
             const tableScore: number = playedCards.map(x => x.point).reduce((prev, next) => prev + next);
             const idxTable = '234567890JQKA';
