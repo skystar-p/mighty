@@ -181,6 +181,8 @@ class RoomData {
         this.playerList.push(user.id);
         this.playerStatus[user.id] = new PlayerStatus();
         user.roomId = this.id;
+        server.to(this.id).emit('join-room', user.id, this.playerList);
+        server.sockets.connected[user.id].join(this.id);
         return true;
     }
 
@@ -195,6 +197,11 @@ class RoomData {
         this.playerList.splice(idx, 1);
         delete this.playerStatus[user.id];
         user.roomId = '';
+        const userSocket = server.sockets.connected[user.id];
+        if (userSocket) {
+            userSocket.leave(this.id);
+        }
+        server.to(this.id).emit('leave-room', user.id, this.playerList);
         return true;
     }
 
@@ -288,6 +295,7 @@ server.on('connect', socket => {
         // generate random string
         const roomId = uuid();
         const room = new RoomData(roomId, user);
+        socket.join(roomId);
         roomData[roomId] = room;
         reply(roomId);
     });
@@ -310,8 +318,6 @@ server.on('connect', socket => {
             reply(null);
             return;
         }
-
-        socket.to(room.id).broadcast.emit('join-room', userId, room.playerList);
         reply(room.playerList);
     });
 
@@ -328,8 +334,6 @@ server.on('connect', socket => {
             reply(false);
             return;
         }
-
-        socket.broadcast.emit('leave-room', userId, room.playerList);
         reply(true);
     });
 
