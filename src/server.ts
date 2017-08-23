@@ -201,7 +201,12 @@ class RoomData {
         if (userSocket) {
             userSocket.leave(this.id);
         }
-        server.to(this.id).emit('leave-room', user.id, this.playerList);
+        if (this.playerList.length !== 0) {
+            server.to(this.id).emit('leave-room', user.id, this.playerList);
+        }
+        else {
+            delete roomData[this.id];
+        }
         return true;
     }
 
