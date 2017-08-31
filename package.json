@@ -4,7 +4,7 @@
   "description": "Web mighty backend",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "gulp build"
   },
   "repository": {
     "type": "git",
@@ -16,8 +16,17 @@
   },
   "homepage": "https://github.com/skystar-p/mighty#readme",
   "devDependencies": {
+    "@types/node": "^8.0.19",
+    "@types/socket.io": "^1.4.29",
+    "@types/uuid": "^3.4.0",
+    "@types/random-js": "^1.0.30",
     "gulp": "^3.9.1",
     "gulp-typescript": "^3.2.1",
     "typescript": "^2.4.2"
+  },
+  "dependencies": {
+    "socket.io": "^2.0.3",
+    "uuid": "^3.1.0",
+    "random-js": "^1.0.8"
   }
 }
