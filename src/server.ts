@@ -112,7 +112,7 @@ class RoomData {
         this.friendSelection = null;
         this.mighty = Card.fromCardCode('sA');
         this.jokerCall = Card.fromCardCode('c3');
-        this.playerList.forEach(userId => {
+        for (const userId of this.playerList) {
             let ps: PlayerStatus = this.playerStatus[userId];
             ps.cards = [];
             ps.score = 0;
@@ -121,7 +121,7 @@ class RoomData {
             ps.commitReady= false;
             ps.commitStatus = CommitStatus.None;
             ps.role = Role.None;
-        });
+        }
         // emit reset event to room
         server.in(this.id).emit('reset');
     }
@@ -135,19 +135,11 @@ class RoomData {
     }
 
     get passes(): number {
-        let counter = 0;
-        this.playerList.forEach(userId => {
-            counter += this.playerStatus[userId].commitStatus === CommitStatus.Passed ? 1 : 0
-        });
-        return counter;
+        return this.playerList.reduce((counter, userId) => counter + Number(this.playerStatus[userId].commitStatus === CommitStatus.Passed), 0);
     }
 
     get commits(): number {
-        let counter = 0;
-        this.playerList.forEach(userId => {
-            counter += this.playerStatus[userId].commitStatus === CommitStatus.Committed ? 1 : 0
-        });
-        return counter;
+        return this.playerList.reduce((counter, userId) => counter + Number(this.playerStatus[userId].commitStatus === CommitStatus.Committed), 0);
     }
 
     get onlyCommit(): string | null {
@@ -217,19 +209,11 @@ class RoomData {
     }
 
     isAllReady(): boolean {
-        let readyCount = 0;
-        this.playerList.forEach(userId => {
-            readyCount += +this.playerStatus[userId].ready;
-        });
-        return readyCount === 5;
+        return this.playerList.reduce((readyCount, userId) => readyCount + Number(this.playerStatus[userId].ready), 0) === 5;
     }
 
     isAllCommitmentReady(): boolean {
-        let commitCount = 0;
-        this.playerList.forEach(userId => {
-            commitCount += +this.playerStatus[userId].commitReady;
-        });
-        return commitCount === 5;
+        return this.playerList.reduce((commitCount, userId) => commitCount + Number(this.playerStatus[userId].commitReady), 0) === 5;
     }
 }
 
@@ -283,10 +267,12 @@ server.on('connect', socket => {
     });
 
     socket.on('nickname-query', (data: string[], reply) => {
-        let nicknames: {[userId: string]: string} = {};
-        data.forEach(userId => {
-            nicknames[userId] = userData[userId].nickname;
-        });
+        const nicknames = data.reduce(
+            (nicknames, userId) => ({
+                ...nicknames,
+                [userId]: userData[userId].nickname
+            }), {}
+        );
         reply(nicknames);
     });
 
@@ -356,10 +342,10 @@ server.on('connect', socket => {
 
         if (room.isAllReady()) {
             readyGame(room);
-            room.playerList.forEach(userId => {
+            for (const userId of room.playerList) {
                 const cards = room.playerStatus[userId].cards.map(x => x.toString());
                 server.to(userId).emit('deal', cards);
-            });
+            }
         }
         reply(true);
     });
@@ -463,10 +449,10 @@ server.on('connect', socket => {
             const currentScore = data.score + (data.giruda === Giruda.None ? 1 : 0);
 
             if (currentScore >= 21) {
-                room.playerList.forEach(userId => {
-                    if (userId === user.id) return;
+                for (const userId of room.playerList) {
+                    if (userId === user.id) continue;
                     room.playerStatus[userId].commitStatus = CommitStatus.Passed;
-                });
+                }
                 reply(true);
                 room.gameStatus = GameStatus.PresidentReady;
                 const president = server.sockets.connected[user.id];
@@ -639,21 +625,22 @@ server.on('connect', socket => {
 
             const playedCardRanks: number[] = playedCards.map(x => cardRank.indexOf(x.toString()));
             let minRank: number = 100, minIndex: number;
-            playedCardRanks.forEach((rank, i) => {
+            for (const [i, rank] of playedCardRanks.entries()) {
                 if (rank < minRank) {
                     minRank = rank;
                     minIndex = i;
                 }
-            });
+            }
 
             if (room.turnIndex === 9) {
-                let result: {[userId: string]: Result};
-                room.playerList.forEach(userId => {
-                    result[userId] =  {
-                        score: room.playerStatus[userId].score,
-                        role: room.playerStatus[userId].role
-                    }
-                });
+                const result = room.playerList.map(
+                    userId => ({
+                        [userId]: {
+                            score: room.playerStatus[userId].score,
+                            role: room.playerStatus[userId].role
+                        }
+                    })
+                ).reduce((result, item) => ({ ...result, ...item }), {});
                 server.in(room.id).emit('result', result);
                 room.reset();
             }
@@ -678,19 +665,19 @@ server.on('connect', socket => {
 
 function readyGame(room: RoomData) {
     const card: Card[][] = shuffleCard();
-    room.playerList.forEach((userId, i) => {
+    for (const [i, userId] of room.playerList.entries()) {
         room.playerStatus[userId].cards = card[i];
-    });
+    }
     room.floor = card[5];
     room.gameStatus = GameStatus.DealMissPending;
 }
 
 function setRole(room: RoomData, friend: FriendSelection) {
-    room.playerList.forEach(userId => {
+    for (const userId of room.playerList) {
         const ps = room.playerStatus[userId];
         if (ps.commitStatus === CommitStatus.Committed) {
             ps.role = Role.President;
-            return;
+            continue;
         }
         switch (friend.kind) {
             case 'selection':
@@ -707,5 +694,5 @@ function setRole(room: RoomData, friend: FriendSelection) {
                 break;
         }
         ps.role = Role.Opposition;
-    });
+    }
 }
