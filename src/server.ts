@@ -176,12 +176,12 @@ class RoomData {
         return true;
     }
 
-    leave(user: UserData): boolean {
+    leave(user: UserData, forced=false): boolean {
         const idx = this.playerList.indexOf(user.id);
         if (idx === -1) {
             return false;
         }
-        if (this.gameStatus !== GameStatus.Ready) {
+        if (this.gameStatus !== GameStatus.Ready && !forced) {
             return false;
         }
         this.playerList.splice(idx, 1);
@@ -192,8 +192,16 @@ class RoomData {
 
     forcedLeave(user: UserData) {
         // for now
-        this.leave(user);
-        this.reset();
+        this.leave(user, true);
+        if (this.gameStatus !== GameStatus.Ready) {
+            this.reset();
+        }
+        if (this.playerList.length !== 0) {
+            server.to(this.id).emit('leave-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
+        }
+        else {
+            delete roomData[this.id];
+        }
     }
 
     isAllReady(): boolean {
