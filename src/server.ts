@@ -544,6 +544,12 @@ server.on('connect', socket => {
             return;
         }
 
+        // if joker is left at 9th turn, player must play joker
+        if (room.turnIndex === 8 && playerStatus.cards.map(c => c.toString()).includes('jk')) {
+            reply(false);
+            return;
+        }
+
         // this means it is first play of a round
         if (!room.turnStatus.currentSuit) {
             // check validity of play
