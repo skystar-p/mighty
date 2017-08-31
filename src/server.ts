@@ -178,11 +178,13 @@ class RoomData {
         if (this.playerList.length >= 5) {
             return false;
         }
+        console.log('Player is joining... playerList is ' + this.playerList);
         this.playerList.push(user.id);
         this.playerStatus[user.id] = new PlayerStatus();
         user.roomId = this.id;
         server.sockets.connected[user.id].join(this.id);
         server.to(this.id).emit('join-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
+        console.log('Player is joined. playerList is ' + this.playerList);
         return true;
     }
 
@@ -194,6 +196,7 @@ class RoomData {
         if (this.gameStatus !== GameStatus.Ready) {
             return false;
         }
+        console.log('Player is leaving... playerList is ' + this.playerList);
         this.playerList.splice(idx, 1);
         delete this.playerStatus[user.id];
         user.roomId = '';
@@ -207,6 +210,7 @@ class RoomData {
         else {
             delete roomData[this.id];
         }
+        console.log('Player is left. playerList is ' + this.playerList);
         return true;
     }
 
