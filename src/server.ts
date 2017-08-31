@@ -173,25 +173,28 @@ class RoomData {
         this.playerList.push(user.id);
         this.playerStatus[user.id] = new PlayerStatus();
         user.roomId = this.id;
-        server.to(this.id).emit('join-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
-        server.sockets.connected[user.id].join(this.id);
         return true;
     }
 
-    leave(user: UserData): boolean {
+    leave(user: UserData, forced=false): boolean {
         const idx = this.playerList.indexOf(user.id);
         if (idx === -1) {
             return false;
         }
-        if (this.gameStatus !== GameStatus.Ready) {
+        if (this.gameStatus !== GameStatus.Ready && !forced) {
             return false;
         }
         this.playerList.splice(idx, 1);
         delete this.playerStatus[user.id];
         user.roomId = '';
-        const userSocket = server.sockets.connected[user.id];
-        if (userSocket) {
-            userSocket.leave(this.id);
+        return true;
+    }
+
+    forcedLeave(user: UserData) {
+        // for now
+        this.leave(user, true);
+        if (this.gameStatus !== GameStatus.Ready) {
+            this.reset();
         }
         if (this.playerList.length !== 0) {
             server.to(this.id).emit('leave-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
@@ -199,13 +202,6 @@ class RoomData {
         else {
             delete roomData[this.id];
         }
-        return true;
-    }
-
-    forcedLeave(user: UserData) {
-        // for now
-        this.leave(user);
-        this.reset();
     }
 
     isAllReady(): boolean {
@@ -289,6 +285,7 @@ server.on('connect', socket => {
         socket.join(roomId);
         roomData[roomId] = room;
         reply(roomId);
+        socket.emit('join-room', user.id, [{id: userId, ready: false}]);
     });
 
     socket.on('join-room', (data, reply) => {
@@ -298,18 +295,20 @@ server.on('connect', socket => {
         const room = roomData[data];
 
         if (user.isJoined()) {
-            reply(null);
+            reply(false);
             return;
         }
         if (!(data in roomData)) {
-            reply(null);
+            reply(false);
             return;
         }
         if (!roomData[data].join(user)) {
-            reply(null);
+            reply(false);
             return;
         }
-        reply(room.playerList);
+        reply(true);
+        socket.join(room.id);
+        server.to(room.id).emit('join-room', user.id, room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})));
     });
 
     socket.on('leave-room', (reply) => {
@@ -326,10 +325,18 @@ server.on('connect', socket => {
             return;
         }
         reply(true);
+        if (room.playerList.length !== 0) {
+            server.to(room.id).emit('leave-room', user.id, room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})));
+        }
+        else {
+            delete roomData[room.id];
+        }
+        if (socket) {
+            socket.leave(room.id);
+        }
     });
 
-    socket.on('ready', (reply) => {
-        // data is none
+    socket.on('ready', (ready: boolean, reply) => {
         const user = userData[socket.id];
         const room = roomData[user.roomId];
 
@@ -337,30 +344,17 @@ server.on('connect', socket => {
             reply(false);
             return;
         }
-        room.playerStatus[user.id].ready = true;
-        socket.broadcast.to(room.id).emit('ready', user.id, room.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})))
+        room.playerStatus[user.id].ready = ready;
+        server.to(room.id).emit('ready', {id: user.id, ready: ready},
+            room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})))
 
-        if (room.isAllReady()) {
+        if (ready && room.isAllReady()) {
             readyGame(room);
             for (const userId of room.playerList) {
                 const cards = room.playerStatus[userId].cards.map(x => x.toString());
                 server.to(userId).emit('deal', cards);
             }
         }
-        reply(true);
-    });
-
-    socket.on('ready-cancel', (reply) => {
-        const user = userData[socket.id];
-        const room = roomData[user.roomId];
-
-        if (room.gameStatus !== GameStatus.Ready) {
-            reply(false);
-            return;
-        }
-
-        room.playerStatus[user.id].ready = false;
-        socket.broadcast.to(room.id).emit('ready-cancel', user.id, room.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})))
         reply(true);
     });
 
@@ -550,9 +544,18 @@ server.on('connect', socket => {
             return;
         }
 
+        // if joker is left at 9th turn, player must play joker
+        if (room.turnIndex === 8 && playerStatus.cards.map(c => c.toString()).includes('jk')) {
+            reply(false);
+            return;
+        }
+
+        // this means it is first play of a round
         if (!room.turnStatus.currentSuit) {
             // check validity of play
-            if (room.turnIndex === 0 && room.turn === 0 && card.suit.toString() === room.commitment.giruda.toString()) {
+            // check: is player playing giruda in the very first round?
+            if (room.turnIndex === 0 && room.turn === 0 && card.toString() !== 'jk' &&
+                    card.suit.toString() === room.commitment.giruda.toString()) {
                 reply(false);
                 return;
             }
@@ -562,8 +565,10 @@ server.on('connect', socket => {
                 prevCard: card.toString(),
                 jokerCall: data.jokerCall && card.toString() === room.jokerCall.toString()
             }
+
             if (card.suit === CardSuit.Joker)
                 newTurn.currentSuit = data.suit;
+
             playerStatus.playedCard = card;
             playerStatus.consumeCard(card);
             room.turnStatus = newTurn;
@@ -574,6 +579,7 @@ server.on('connect', socket => {
         }
 
         // check validity of play
+        // check: is player playing card that have suit of current round?
         if ((card.suit !== room.turnStatus.currentSuit &&
                 playerStatus.cards.map(x => x.suit).includes(card.suit)) &&
                 card.toString() !== 'jk' &&
@@ -581,6 +587,7 @@ server.on('connect', socket => {
             reply(false);
             return;
         }
+        // check: is player not playing joker in joker call round?
         if (room.turnStatus.jokerCall === true &&
                 playerStatus.cards.map(x => x.toString()).includes('jk') &&
                 card.toString() !== 'jk' && card.toString() !== room.mighty.toString()) {
@@ -590,8 +597,10 @@ server.on('connect', socket => {
 
         // valid play by here
         room.turnStatus.prevCard = card.toString();
+
         room.nextTurn();
 
+        // if next turn is new round, calculate the previous round
         if (room.turn === 0) {
             // calculate winner of round and prepare next round
             const playedCards: Card[] = room.playerList.map(x => room.playerStatus[x].playedCard);
@@ -610,7 +619,9 @@ server.on('connect', socket => {
                 }
             }
 
+            // always mighty is the best rank
             cardRank.push(room.mighty.toString());
+            // if not joker call round, joker is the next rank of mighty
             if (room.turnStatus.jokerCall === false && room.turnIndex >= 1 && room.turnIndex <= 8)
                 cardRank.push('jk');
             for (let j = 0; j < 4; j++) {
@@ -620,7 +631,8 @@ server.on('connect', socket => {
                     cardRank.push(cr);
                 }
             }
-            if (room.turnStatus.jokerCall === true && (room.turnIndex === 1 || room.turnIndex === 9))
+            // if joker call round or in first round, joker is the lowest rank
+            if (room.turnStatus.jokerCall === true && room.turnIndex === 1)
                 cardRank.push('jk');
 
             const playedCardRanks: number[] = playedCards.map(x => cardRank.indexOf(x.toString()));
