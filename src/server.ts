@@ -285,6 +285,7 @@ server.on('connect', socket => {
         socket.join(roomId);
         roomData[roomId] = room;
         reply(roomId);
+        socket.emit('join-room', user.id, [{id: userId, ready: false}]);
     });
 
     socket.on('join-room', (data, reply) => {
@@ -294,18 +295,18 @@ server.on('connect', socket => {
         const room = roomData[data];
 
         if (user.isJoined()) {
-            reply(null);
+            reply(false);
             return;
         }
         if (!(data in roomData)) {
-            reply(null);
+            reply(false);
             return;
         }
         if (!roomData[data].join(user)) {
-            reply(null);
+            reply(false);
             return;
         }
-        reply(room.playerList);
+        reply(true);
         socket.join(room.id);
         server.to(room.id).emit('join-room', user.id, room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})));
     });
