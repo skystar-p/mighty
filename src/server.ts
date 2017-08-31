@@ -181,7 +181,7 @@ class RoomData {
         this.playerList.push(user.id);
         this.playerStatus[user.id] = new PlayerStatus();
         user.roomId = this.id;
-        server.to(this.id).emit('join-room', user.id, this.playerList);
+        server.to(this.id).emit('join-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
         server.sockets.connected[user.id].join(this.id);
         return true;
     }
@@ -202,7 +202,7 @@ class RoomData {
             userSocket.leave(this.id);
         }
         if (this.playerList.length !== 0) {
-            server.to(this.id).emit('leave-room', user.id, this.playerList);
+            server.to(this.id).emit('leave-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
         }
         else {
             delete roomData[this.id];
@@ -351,8 +351,9 @@ server.on('connect', socket => {
             reply(false);
             return;
         }
-
         room.playerStatus[user.id].ready = true;
+        socket.broadcast.to(room.id).emit('ready', user.id, room.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})))
+
         if (room.isAllReady()) {
             readyGame(room);
             room.playerList.forEach(userId => {
@@ -373,6 +374,7 @@ server.on('connect', socket => {
         }
 
         room.playerStatus[user.id].ready = false;
+        socket.broadcast.to(room.id).emit('ready-cancel', user.id, room.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})))
         reply(true);
     });
 
