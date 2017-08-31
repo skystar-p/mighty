@@ -193,11 +193,11 @@ class RoomData {
         if (this.playerList.length !== 0) {
             server.to(this.id).emit('leave-room', user.id, this.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})));
         }
-        if (userSocket) {
-            userSocket.leave(this.id);
-        }
         else {
             delete roomData[this.id];
+        }
+        if (userSocket) {
+            userSocket.leave(this.id);
         }
         return true;
     }
@@ -337,7 +337,7 @@ server.on('connect', socket => {
             return;
         }
         room.playerStatus[user.id].ready = ready;
-        socket.to(room.id).emit('ready', {id: user.id, ready: ready},
+        server.to(room.id).emit('ready', {id: user.id, ready: ready},
             room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})))
 
         if (ready && room.isAllReady()) {
