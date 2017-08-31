@@ -342,8 +342,7 @@ server.on('connect', socket => {
         reply(true);
     });
 
-    socket.on('ready', (reply) => {
-        // data is none
+    socket.on('ready', (ready: boolean, reply) => {
         const user = userData[socket.id];
         const room = roomData[user.roomId];
 
@@ -351,30 +350,17 @@ server.on('connect', socket => {
             reply(false);
             return;
         }
-        room.playerStatus[user.id].ready = true;
-        socket.broadcast.to(room.id).emit('ready', user.id, room.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})))
+        room.playerStatus[user.id].ready = ready;
+        socket.broadcast.to(room.id).emit('ready', {id: user.id, ready: ready},
+            room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})))
 
-        if (room.isAllReady()) {
+        if (ready && room.isAllReady()) {
             readyGame(room);
             room.playerList.forEach(userId => {
                 const cards = room.playerStatus[userId].cards.map(x => x.toString());
                 server.to(userId).emit('deal', cards);
             });
         }
-        reply(true);
-    });
-
-    socket.on('ready-cancel', (reply) => {
-        const user = userData[socket.id];
-        const room = roomData[user.roomId];
-
-        if (room.gameStatus !== GameStatus.Ready) {
-            reply(false);
-            return;
-        }
-
-        room.playerStatus[user.id].ready = false;
-        socket.broadcast.to(room.id).emit('ready-cancel', user.id, room.playerList.map(p => ({id: p, ready: this.playerStatus[p].ready})))
         reply(true);
     });
 
@@ -564,9 +550,12 @@ server.on('connect', socket => {
             return;
         }
 
+        // this means it is first play of a round
         if (!room.turnStatus.currentSuit) {
             // check validity of play
-            if (room.turnIndex === 0 && room.turn === 0 && card.suit.toString() === room.commitment.giruda.toString()) {
+            // check: is player playing giruda in the very first round?
+            if (room.turnIndex === 0 && room.turn === 0 && card.toString() !== 'jk' &&
+                    card.suit.toString() === room.commitment.giruda.toString()) {
                 reply(false);
                 return;
             }
@@ -576,8 +565,10 @@ server.on('connect', socket => {
                 prevCard: card.toString(),
                 jokerCall: data.jokerCall && card.toString() === room.jokerCall.toString()
             }
+
             if (card.suit === CardSuit.Joker)
                 newTurn.currentSuit = data.suit;
+
             playerStatus.playedCard = card;
             playerStatus.consumeCard(card);
             room.turnStatus = newTurn;
@@ -588,6 +579,7 @@ server.on('connect', socket => {
         }
 
         // check validity of play
+        // check: is player playing card that have suit of current round?
         if ((card.suit !== room.turnStatus.currentSuit &&
                 playerStatus.cards.map(x => x.suit).includes(card.suit)) &&
                 card.toString() !== 'jk' &&
@@ -595,6 +587,7 @@ server.on('connect', socket => {
             reply(false);
             return;
         }
+        // check: is player not playing joker in joker call round?
         if (room.turnStatus.jokerCall === true &&
                 playerStatus.cards.map(x => x.toString()).includes('jk') &&
                 card.toString() !== 'jk' && card.toString() !== room.mighty.toString()) {
@@ -604,8 +597,10 @@ server.on('connect', socket => {
 
         // valid play by here
         room.turnStatus.prevCard = card.toString();
+
         room.nextTurn();
 
+        // if next turn is new round, calculate the previous round
         if (room.turn === 0) {
             // calculate winner of round and prepare next round
             const playedCards: Card[] = room.playerList.map(x => room.playerStatus[x].playedCard);
@@ -624,7 +619,9 @@ server.on('connect', socket => {
                 }
             }
 
+            // always mighty is the best rank
             cardRank.push(room.mighty.toString());
+            // if not joker call round, joker is the next rank of mighty
             if (room.turnStatus.jokerCall === false && room.turnIndex >= 1 && room.turnIndex <= 8)
                 cardRank.push('jk');
             for (let j = 0; j < 4; j++) {
@@ -634,7 +631,8 @@ server.on('connect', socket => {
                     cardRank.push(cr);
                 }
             }
-            if (room.turnStatus.jokerCall === true && (room.turnIndex === 1 || room.turnIndex === 9))
+            // if joker call round or in first round, joker is the lowest rank
+            if (room.turnStatus.jokerCall === true && room.turnIndex === 1)
                 cardRank.push('jk');
 
             const playedCardRanks: number[] = playedCards.map(x => cardRank.indexOf(x.toString()));
