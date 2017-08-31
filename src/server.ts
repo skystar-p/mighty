@@ -351,7 +351,7 @@ server.on('connect', socket => {
             return;
         }
         room.playerStatus[user.id].ready = ready;
-        socket.to(room.id).emit('ready', {id: user.id, ready: ready},
+        server.to(room.id).emit('ready', {id: user.id, ready: ready},
             room.playerList.map(p => ({id: p, ready: room.playerStatus[p].ready})))
 
         if (ready && room.isAllReady()) {
