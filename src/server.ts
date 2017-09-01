@@ -413,6 +413,7 @@ server.on('connect', socket => {
             if (room.passes === 4 && room.commits === 1) {
                 room.gameStatus = GameStatus.PresidentReady;
                 const president = server.sockets.connected[room.onlyCommit];
+                // TODO: more data in waiting-president?
                 president.to(room.id).broadcast.emit('waiting-president');
                 president.emit('floor-cards', room.floor.map(x => x.toString()))
                 return;
@@ -506,6 +507,7 @@ server.on('connect', socket => {
                 }
             }
             room.commitment = changeCommitment;
+            // TODO: emit commitment change message
         }
 
         setRole(room, friendSelection);
