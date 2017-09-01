@@ -613,8 +613,10 @@ server.on('connect', socket => {
             const cardRank: string[] = [];
 
             suitRank += room.commitment.giruda;
-            suitRank += room.turnStatus.currentSuit;
-            for (let j = 0; j < 2; j++) {
+            if (room.commitment.giruda !== room.turnStatus.currentSuit) {
+                suitRank += room.turnStatus.currentSuit;
+            }
+            for (let j = 0; j < 3; j++) {
                 for (let i = 0; i < 4; i++) {
                     if (suitRank.includes(suitTable[i])) continue;
                     suitRank += suitTable[i];
