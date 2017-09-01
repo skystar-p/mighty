@@ -229,7 +229,7 @@ class UserData {
 }
 
 // construct server instance
-const server = io(12345);
+const server = io(8181);
 
 let roomData: { [roomId: string]: RoomData } = {};
 
