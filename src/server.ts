@@ -406,39 +406,15 @@ server.on('connect', socket => {
             return;
         }
 
-        if (data === null) {
-            playerStatus.commitStatus = CommitStatus.Passed;
-            reply(true);
-
-            if (room.passes === 4 && room.commits === 1) {
-                room.gameStatus = GameStatus.PresidentReady;
-                const president = server.sockets.connected[room.onlyCommit];
-                // TODO: more data in waiting-president?
-                president.to(room.id).broadcast.emit('waiting-president');
-                president.emit('floor-cards', room.floor.map(x => x.toString()))
-                return;
-            }
-
-            let counter = 0;
-            while (room.playerStatus[room.currentTurn.id].commitStatus === CommitStatus.Passed) {
-                room.nextTurn();
-                counter++;
-
-                if (counter >= 5) {
-                    room.reset();
-                    return;
-                }
-            }
-            server.to(room.id).emit('commitment-request', room.currentTurn.id);
-            return;
-        }
-
         if (playerStatus.commitStatus === CommitStatus.Passed) {
             reply(false);
             return;
         }
 
-        if (room.isValidCommitment(data)) {
+        if (data === null) {
+            playerStatus.commitStatus = CommitStatus.Passed;
+        }
+        else if (room.isValidCommitment(data)) {
             playerStatus.commitStatus = CommitStatus.Committed;
             room.commitment = data;
             const currentScore = data.score + (data.giruda === Giruda.None ? 1 : 0);
@@ -455,16 +431,31 @@ server.on('connect', socket => {
                 president.emit('floor-cards', room.floor.map(x => x.toString()))
                 return;
             }
-
-            while (room.playerStatus[room.currentTurn.id].commitStatus === CommitStatus.Passed)
-                room.nextTurn();
-            server.to(room.id).emit('commitment-request', room.currentTurn.id);
         }
         else {
             reply(false);
-            server.to(room.id).emit('commitment-request', room.currentTurn.id);
+            // server.to(room.id).emit('commitment-request', room.currentTurn.id);
+            return;
         }
+
         reply(true);
+        if (room.passes === 4 && room.commits === 1) {
+            room.gameStatus = GameStatus.PresidentReady;
+            const president = server.sockets.connected[room.onlyCommit];
+            // TODO: more data in waiting-president?
+            president.to(room.id).broadcast.emit('waiting-president');
+            president.emit('floor-cards', room.floor.map(x => x.toString()))
+            return;
+        }
+        else if (room.passes === 5) {
+            room.reset();
+            return;
+        }
+
+        do {
+            room.nextTurn();
+        } while (room.playerStatus[room.currentTurn.id].commitStatus === CommitStatus.Passed);
+        server.to(room.id).emit('commitment-request', room.currentTurn.id);
     });
 
     socket.on('friend-selection', (floorCard: string[], friendSelection: FriendSelection, changeCommitment: Commitment | null, reply) => {
