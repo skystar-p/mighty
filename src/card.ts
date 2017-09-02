@@ -167,5 +167,5 @@ export function shuffleCard(): Card[][] {
         hands.push(left.slice(0, 10));
         left = left.slice(10);
     }
-    return hands.concat(left);
+    return hands.concat([left]);
 }
