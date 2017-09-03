@@ -77,7 +77,7 @@ class PlayerStatus {
 
     }
 
-    consumeCard(card: Card) {
+    consumeCard(card: Card | string) {
         this.cards.splice(this.cards.map(x => x.toString()).indexOf(card.toString()), 1);
     }
 }
@@ -432,11 +432,14 @@ server.on('connect', socket => {
         }
 
         reply(true);
+
+        server.to(room.id).emit('commitment-confirmed', room.currentTurn.id, data);
+
         if (room.passes === 4 && room.commits === 1) {
             room.gameStatus = GameStatus.PresidentReady;
             const president = server.sockets.connected[room.onlyCommit];
             // TODO: more data in waiting-president?
-            president.to(room.id).broadcast.emit('waiting-president');
+            president.to(room.id).broadcast.emit('waiting-president', room.onlyCommit);
             president.emit('floor-cards', room.floor.map(x => x.toString()))
             return;
         }
@@ -479,7 +482,7 @@ server.on('connect', socket => {
             const oldScore = room.commitment.score + (room.commitment.giruda === Giruda.None ? 1 : 0);
             const newScore = changeCommitment.score + (changeCommitment.giruda === Giruda.None ? 1 : 0);
             if (room.commitment.giruda === changeCommitment.giruda) {
-                if (oldScore > newScore) {
+                if (oldScore >= newScore) {
                     reply(false);
                     return;
                 }
@@ -491,11 +494,13 @@ server.on('connect', socket => {
                 }
             }
             room.commitment = changeCommitment;
-            // TODO: emit commitment change message
+            server.to(room.id).emit('commitment-change', changeCommitment);
         }
 
         setRole(room, friendSelection);
         room.floor = floorCard.map(x => Card.fromCardCode(x));
+        for (const c of room.floor)
+            playerStatus.consumeCard(c);
         room.friendSelection = friendSelection;
         room.changeHead(user.id);
         room.gameStatus = GameStatus.MainGame;
