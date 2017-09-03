@@ -424,17 +424,10 @@ server.on('connect', socket => {
                     if (userId === user.id) continue;
                     room.playerStatus[userId].commitStatus = CommitStatus.Passed;
                 }
-                reply(true);
-                room.gameStatus = GameStatus.PresidentReady;
-                const president = server.sockets.connected[user.id];
-                president.to(room.id).broadcast.emit('waiting-president');
-                president.emit('floor-cards', room.floor.map(x => x.toString()))
-                return;
             }
         }
         else {
             reply(false);
-            // server.to(room.id).emit('commitment-request', room.currentTurn.id);
             return;
         }
 
